@@ -228,6 +228,7 @@ typedef enum {
 	ST_LOOP,            /**< Loop statement. */
 	ST_DEALLOCATION,    /**< Deallocation statement. */
 	ST_FUNCDEF,         /**< Function definition statement. */
+  ST_FUNCDECL,        /**< Function declaration statement. */
 	ST_EXPR,            /**< Expression statement. */
 	ST_ALTARRAYDEF,     /**< Function definition statement. */
 } StmtType;
@@ -330,6 +331,8 @@ typedef enum {
 	CT_ARRAY    /**< Array constant. */
 } ConstantType;
 
+
+
 /**
  * Stores constant data.
  */
@@ -346,6 +349,30 @@ typedef struct {
 	ConstantType type; /**< The type of constant in \a data. */
 	ConstantData data; /**< The constant. */
 } ConstantNode;
+
+/**
+ * Represents a c type.
+ */
+typedef enum {
+	FT_VOID,    /**< void */
+	FT_VOIDP,   /**< *void */
+  FT_SIZE,    /**< size_t */
+} FFIType;
+
+typedef struct {
+  unsigned int num;       /**< The number of args. */
+  FFIType *types;         /**< Array of ffitypes. */
+} FFITypeList;
+
+/**
+ * Stores a function definition statement.
+ */
+typedef struct {
+  IdentifierNode *scope;
+	IdentifierNode *name;     /**< The name of the function. */
+  IdentifierNodeList *args;
+  IdentifierNode *ret_type;
+} ExtrnFuncDeclStmtNode;
 
 /**
  * Stores a function definition statement.
@@ -707,6 +734,16 @@ void deleteDeallocationStmtNode(DeallocationStmtNode *);
 /**@{*/
 FuncDefStmtNode *createFuncDefStmtNode(IdentifierNode *, IdentifierNode *, IdentifierNodeList *, BlockNode *);
 void deleteFuncDefStmtNode(FuncDefStmtNode *);
+/**@}*/
+
+/**
+ * \name ExtrnFuncDeclStmtNode modifiers
+ *
+ * Functions for creating and deleting ExtrnFuncDeclStmtNode.
+ */
+/**@{*/
+ExtrnFuncDeclStmtNode *createExtrnFuncDeclStmtNode(IdentifierNode *,IdentifierNode *, IdentifierNodeList *, IdentifierNode *);
+void deleteExtrnFuncDeclStmtNode(ExtrnFuncDeclStmtNode *);
 /**@}*/
 
 /**

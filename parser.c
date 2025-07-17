@@ -1,4 +1,5 @@
 #include "parser.h"
+#include "tokenizer.h"
 
 #ifdef DEBUG
 static unsigned int shiftwidth = 0;
@@ -333,6 +334,7 @@ IdentifierNodeList *createIdentifierNodeList(void)
 	return p;
 }
 
+
 /**
  * Adds an identifier to a list.
  *
@@ -502,6 +504,11 @@ void deleteStmtNode(StmtNode *node)
 		case ST_FUNCDEF: {
 			FuncDefStmtNode *stmt = (FuncDefStmtNode *)node->stmt;
 			deleteFuncDefStmtNode(stmt);
+			break;
+		}
+    case ST_FUNCDECL: {
+			ExtrnFuncDeclStmtNode *stmt = (ExtrnFuncDeclStmtNode *)node->stmt;
+			deleteExtrnFuncDeclStmtNode(stmt);
 			break;
 		}
 		case ST_EXPR: {
@@ -1049,6 +1056,38 @@ FuncDefStmtNode *createFuncDefStmtNode(IdentifierNode *scope,
 }
 
 /**
+ * Creates a function declaration statement.
+ *
+ * \param [in] scope The scope to define the function in.
+ *
+ * \param [in] name The name of the function.
+ *
+ * \param [in] args The function argument types.
+ *
+ * \param [in] ret_type The function's return type.
+ *
+ * \return A pointer to a function definition statement with the desired
+ * properties.
+ *
+ * \retval NULL Memory allocation failed.
+ */
+ExtrnFuncDeclStmtNode *createExtrnFuncDeclStmtNode(IdentifierNode *scope,IdentifierNode *name,
+                                       IdentifierNodeList *args,
+                                       IdentifierNode *ret_type)
+{
+	ExtrnFuncDeclStmtNode *p = malloc(sizeof(ExtrnFuncDeclStmtNode));
+	if (!p) {
+		perror("malloc");
+		return NULL;
+	}
+  p->scope = scope;
+	p->name = name;
+	p->args = args;
+  p->ret_type = ret_type;
+	return p;
+}
+
+/**
  * Deletes a function definition statement.
  *
  * \param [in,out] node The function definition statement to delete.
@@ -1062,6 +1101,22 @@ void deleteFuncDefStmtNode(FuncDefStmtNode *node)
 	deleteIdentifierNode(node->name);
 	deleteIdentifierNodeList(node->args);
 	deleteBlockNode(node->body);
+	free(node);
+}
+
+/**
+ * Deletes a function declaration statement.
+ *
+ * \param [in,out] node The function declaration statement to delete.
+ *
+ * \post The memory at \a node and all of its members will be freed.
+ */
+void deleteExtrnFuncDeclStmtNode(ExtrnFuncDeclStmtNode *node)
+{
+	if (!node) return;
+	deleteIdentifierNode(node->name);
+	deleteIdentifierNode(node->ret_type);
+	deleteIdentifierNodeList(node->args);
 	free(node);
 }
 
@@ -3795,6 +3850,138 @@ parseFuncDefStmtNodeAbort: /* Exception handling */
 }
 
 /**
+ * Creates a list of FFITypes.
+ *
+ * \return A pointer to an ffi type list.
+ *
+ * \retval NULL Memory allocation failed.
+ */
+FFITypeList *createFFITypeList(void)
+{
+	FFITypeList *p = malloc(sizeof(FFITypeList));
+	if (!p) {
+		perror("malloc");
+		return NULL;
+	}
+	p->num   = 0;
+	p->types = NULL;
+	return p;
+}
+
+/**
+ * Parses tokens into a function declaration statement.
+ *
+ * \param [in] tokenp The position in a token list to start parsing at.
+ *
+ * \post \a tokenp will point to the next unparsed token.
+ *
+ * \return A pointer to a function declaration statement.
+ *
+ * \retval NULL Unable to parse.
+ */
+StmtNode *parseExtrnFuncDeclStmtNode(Token ***tokenp)
+{
+  IdentifierNode *scope = NULL;
+	IdentifierNode *name = NULL;
+	IdentifierNodeList *args = NULL;
+	IdentifierNode *arg = NULL;
+	IdentifierNode *ret_type = NULL;
+	ExtrnFuncDeclStmtNode *stmt = NULL;
+  StmtNode *ret = NULL;
+	int status;
+
+	/* Work from a copy of the token stream in case something goes wrong */
+	Token **tokens = *tokenp;
+
+#ifdef DEBUG
+	debug("ST_FUNCDECL");
+#endif
+
+	/* Parse the function definition token */
+	status = acceptToken(&tokens, TT_CANHAS);
+	if (!status) {
+		parser_error_expected_token(TT_CANHAS, tokens);
+		goto parseFuncDefStmtNodeAbort;
+	}
+/* Parse the scope to define the function in */
+	scope = parseIdentifierNode(&tokens);
+	if (!scope) goto parseFuncDefStmtNodeAbort;
+	/* Parse the name of the function */
+	name = parseIdentifierNode(&tokens);
+	if (!name) goto parseFuncDefStmtNodeAbort;
+
+	/* Create a list of arguments */
+	args = createIdentifierNodeList();
+	if (!args) goto parseFuncDefStmtNodeAbort;
+
+	/* Parse the first argument indicator */
+	if (acceptToken(&tokens, TT_YR)) {
+		/* Parse the first argument type */
+		arg = parseIdentifierNode(&tokens);
+		if (!arg) goto parseFuncDefStmtNodeAbort;
+
+		/* Add the first argument to the arguments list */
+		status = addIdentifierNode(args, arg);
+		if (!status) goto parseFuncDefStmtNodeAbort;
+		arg = NULL;
+
+		/* Continue parsing argument indicators */
+		while (acceptToken(&tokens, TT_ANYR)) {
+			/* Parse the argument */
+			arg = parseIdentifierNode(&tokens);
+			if (!arg) goto parseFuncDefStmtNodeAbort;
+
+			/* Add the argument to the arguments list */
+			status = addIdentifierNode(args, arg);
+			if (!status) goto parseFuncDefStmtNodeAbort;
+			arg = NULL;
+		}
+	}
+
+	/* FFI functions need return type */
+	status = acceptToken(&tokens, TT_FOR);
+	if (!status) {
+		parser_error_expected_token(TT_FOR, tokens);
+		goto parseFuncDefStmtNodeAbort;
+	}
+  ret_type = parseIdentifierNode(&tokens);
+
+	/* The end-function token should appear on its own line */
+	status = acceptToken(&tokens, TT_NEWLINE);
+	if (!status) {
+		parser_error(PR_EXPECTED_END_OF_STATEMENT, tokens);
+		goto parseFuncDefStmtNodeAbort;
+	}
+
+	/* Create the new ExtrnFuncDeclStmtNode structure */
+	stmt = createExtrnFuncDeclStmtNode(scope, name, args, ret_type);
+	if (!stmt) goto parseFuncDefStmtNodeAbort;
+
+	/* Create the new StmtNode structure */
+	ret = createStmtNode(ST_FUNCDECL, stmt);
+	if (!ret) goto parseFuncDefStmtNodeAbort;
+
+	/* Since we're successful, update the token stream */
+	*tokenp = tokens;
+
+	return ret;
+
+parseFuncDefStmtNodeAbort: /* Exception handling */
+
+	/* Clean up any allocated structures */
+	if (ret) deleteStmtNode(ret);
+	else if (stmt) deleteExtrnFuncDeclStmtNode(stmt);
+	else {
+		if (args) deleteIdentifierNodeList(args);
+		if (arg) deleteIdentifierNode(arg);
+		if (name) deleteIdentifierNode(name);
+	}
+
+	return NULL;
+}
+
+
+/**
  * Parses tokens into an alternate array definition statement.
  *
  * \param [in] tokenp The position in a token list to start parsing at.
@@ -4009,6 +4196,10 @@ StmtNode *parseStmtNode(Token ***tokenp)
 	/* Function definition */
 	else if (peekToken(&tokens, TT_HOWIZ)) {
 		ret = parseFuncDefStmtNode(tokenp);
+	}
+  /* Function declaration */
+	else if (peekToken(&tokens, TT_CANHAS)) {
+		ret = parseExtrnFuncDeclStmtNode(tokenp);
 	}
 	/* Alternate array definition */
 	else if (peekToken(&tokens, TT_OHAIIM)) {
