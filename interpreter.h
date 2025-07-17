@@ -56,6 +56,7 @@ typedef enum {
 	VT_STRING,  /**< A string value. */
 	VT_NIL,     /**< Represents no value. */
 	VT_FUNC,    /**< A function. */
+  VT_EXTRN,   /**< Extern function */
 	VT_ARRAY    /**< An array. */
 } ValueType;
 
@@ -67,6 +68,7 @@ typedef union {
 	float f;               /**< Decimal data. */
 	char *s;               /**< String data. */
 	FuncDefStmtNode *fn;   /**< Function data. */
+  ExtrnFuncDeclStmtNode *extrn;   /**< Function data. */
 	struct scopeobject *a; /**< Array data. */
 } ValueData;
 

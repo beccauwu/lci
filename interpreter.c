@@ -1,4 +1,5 @@
 #include "interpreter.h"
+#include "parser.h"
 
 /**
  * Creates a new string by copying the contents of another string.
@@ -3613,6 +3614,50 @@ ReturnObject *interpretFuncDefStmtNode(StmtNode *node,
 	}
 	return createReturnObject(RT_DEFAULT, NULL);
 }
+/**
+ * Interprets a function declaration statement.
+ *
+ * \param [in] node The statement to interpret.
+ *
+ * \param [in] scope The scope to evaluate \a node under.
+ *
+ * \pre \a node contains a statement created by createExtrnFuncDeclStmtNode().
+ *
+ * \return A pointer to a default return value.
+ *
+ * \retval NULL An error occurred during interpretation.
+ */
+ReturnObject *interpretExtrnFuncDeclStmtNode(StmtNode *node,
+                                       ScopeObject *scope)
+{
+	/* Add the function to the current scope */
+	ExtrnFuncDeclStmtNode *stmt = (ExtrnFuncDeclStmtNode *)node->stmt;
+	ValueObject *init = NULL;
+	ScopeObject *dest = NULL;
+
+	dest = getScopeObject(scope, scope, stmt->scope);
+	if (!dest) return NULL;
+	if (getScopeValueLocal(scope, dest, stmt->name)) {
+		IdentifierNode *id = (IdentifierNode *)(stmt->name);
+		char *name = resolveIdentifierName(id, scope);
+		if (name) {
+			error(IN_FUNCTION_NAME_USED_BY_VARIABLE, id->fname, id->line, name);
+			free(name);
+		}
+		return NULL;
+	}
+	init = createExtrnValueObject(stmt);
+	if (!init) return NULL;
+	if (!createScopeValue(scope, dest, stmt->name)) {
+		deleteValueObject(init);
+		return NULL;
+	}
+	if (!updateScopeValue(scope, dest, stmt->name, init)) {
+		deleteValueObject(init);
+		return NULL;
+	}
+	return createReturnObject(RT_DEFAULT, NULL);
+}
 
 /**
  * Interprets an expression statement.
@@ -3715,6 +3760,7 @@ static ReturnObject *(*StmtJumpTable[14])(StmtNode *, ScopeObject *) = {
 	interpretLoopStmtNode,
 	interpretDeallocationStmtNode,
 	interpretFuncDefStmtNode,
+  interpretExtrnFuncDeclStmtNode,
 	interpretExprStmtNode,
 	interpretAltArrayDefStmtNode };
 
