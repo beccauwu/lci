@@ -39,7 +39,7 @@ SET(SRCS
   unicode.c
   error.c
 )
-  
+add_compile_options(-Wall -Wextra -Wswitch-enum -ggdb)
 add_executable(lci ${SRCS} ${HDRS})
 target_link_libraries(lci m)
 add_subdirectory(test)
