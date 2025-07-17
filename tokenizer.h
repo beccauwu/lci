@@ -301,6 +301,7 @@ int isFloat(const char *);
 int isString(const char *);
 int isIdentifier(const char *);
 Token *isKeyword(LexemeList *, unsigned int *);
+void dump_tokens(Token **);
 /**@}*/
 
 /**

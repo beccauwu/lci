@@ -1,4 +1,5 @@
 #include "tokenizer.h"
+#include <stdio.h>
 
 /**
  * Checks if a string follows the format for an integer.  Specifically, it
@@ -391,4 +392,9 @@ Token **tokenizeLexemes(LexemeList *list)
 	ret = mem;
 	ret[retsize - 1] = NULL;
 	return ret;
+}
+void dump_tokens(Token **ts) {
+  for (size_t i = 0; ts[i]->type != TT_EOF; ++i) {
+    printf("[%zu]: TOKEN(%s) = %s\n", i, token_names[ts[i]->type], ts[i]->image);
+  }
 }
