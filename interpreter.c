@@ -249,6 +249,28 @@ ValueObject *createFunctionValueObject(FuncDefStmtNode *def)
 }
 
 /**
+ * Creates a extern-type value.
+ *
+ * \param [in] def The function definition to store.
+ *
+ * \return A function-type value containing \a data.
+ *
+ * \retval NULL Memory allocation failed.
+ */
+ValueObject *createExtrnValueObject(ExtrnFuncDeclStmtNode *def)
+{
+	ValueObject *p = malloc(sizeof(ValueObject));
+	if (!p) {
+		perror("malloc");
+		return NULL;
+	}
+	p->type = VT_EXTRN;
+	p->data.extrn = def;
+	p->semaphore = 1;
+	return p;
+}
+
+/**
  * Creates an array-type value.
  *
  * \param [in] parent The optional parent scope to use.
