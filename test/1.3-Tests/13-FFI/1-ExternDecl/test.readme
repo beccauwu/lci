@@ -1,0 +1,1 @@
+This test checks to see whether the external function declarations are tokenised and parsed without error.
