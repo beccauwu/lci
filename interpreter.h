@@ -42,6 +42,11 @@
 #define getFunction(value) (value->data.fn)
 
 /**
+ * Retrieves a value's extern data.
+ */
+#define getExtrn(value) (value->data.extrn)
+
+/**
  * Retrieves a value's array data.
  */
 #define getArray(value) (value->data.a)

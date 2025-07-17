@@ -1,8 +1,10 @@
 #include "interpreter.h"
 #include "parser.h"
 #include <assert.h>
+#include <ffi.h>
 
 #define ARRAY_LEN(a) (sizeof(a)/sizeof(a[0]))
+#define TODO(s) (fprintf(stderr, "%s:%d - TODO: %s ( %s )\n", __FILE__, __LINE__,__func__,(s)), abort())
 
 /**
  * Creates a new string by copying the contents of another string.
@@ -730,7 +732,8 @@ ScopeObject *getScopeObjectLocalCaller(ScopeObject *src,
 		for (n = 0; n < current->numvals; n++) {
 			if (!strcmp(current->names[n], name)) {
 				if (current->values[n]->type != VT_ARRAY
-						&& current->values[n]->type != VT_FUNC) {
+						&& current->values[n]->type != VT_FUNC 
+            && current->values[n]->type != VT_EXTRN) {
 					error(IN_VARIABLE_NOT_AN_ARRAY, target->fname, target->line, name);
 					goto getScopeObjectLocalCallerAbort;
 				}
@@ -1706,8 +1709,8 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 	if (!outer) return NULL;
 
 	def = getScopeValue(scope, dest, expr->name);
-
-	if (!def || def->type != VT_FUNC) {
+  
+	if (!def || (def->type != VT_FUNC && def->type != VT_EXTRN)) {
 		IdentifierNode *id = (IdentifierNode *)(expr->name);
 		char *name = resolveIdentifierName(id, scope);
 		if (name) {
@@ -1728,6 +1731,16 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 		deleteScopeObject(outer);
 		return NULL;
 	}
+  /* External function calls */
+  if (def->type == VT_EXTRN) {
+    TODO("Handle external function calls");
+    ffi_cif cif;
+    ffi_type **arg_types = malloc(sizeof(*arg_types)*getExtrn(def)->args->num);
+    static_assert(sizeof(size_t) == sizeof(long unsigned int), "?");
+    assert(arg_types != NULL && "malloc failed");
+    //TODO: parse arg types, pass args to ffi, call fn, parse return value
+    free(arg_types);
+  }
 	for (n = 0; n < getFunction(def)->args->num; n++) {
 		ValueObject *val = NULL;
 		if (!createScopeValue(scope, outer, getFunction(def)->args->ids[n])) {
