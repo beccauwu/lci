@@ -190,7 +190,7 @@ static const char *keywords[] = {
   "FOR",         /* TT_FOR */
 	""             /* TT_ENDOFTOKENS */
 };
-
+static_assert(sizeof(keywords)/sizeof(*keywords) == TT_ENDOFTOKENS+1, "keyword count has changed");
 /**
  * Stores token data with semantic meaning.
  */
