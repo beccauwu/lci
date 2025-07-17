@@ -1,5 +1,8 @@
 #include "interpreter.h"
 #include "parser.h"
+#include <assert.h>
+
+#define ARRAY_LEN(a) (sizeof(a)/sizeof(a[0]))
 
 /**
  * Creates a new string by copying the contents of another string.
@@ -2911,6 +2914,8 @@ static ValueObject *(*OpExprJumpTable[14])(OpExprNode *, ScopeObject *) = {
 	interpretEqualityOpExprNode,
 	interpretConcatOpExprNode };
 
+static_assert(ARRAY_LEN(OpExprJumpTable) == OP_COUNT, "OpType count has changed");
+
 /**
  * Interprets an operation.
  *
@@ -2940,6 +2945,8 @@ static ValueObject *(*ExprJumpTable[6])(ExprNode *, ScopeObject *) = {
 	interpretFuncCallExprNode,
 	interpretOpExprNode,
 	interpretImpVarExprNode };
+
+static_assert(ARRAY_LEN(ExprJumpTable) == ET_COUNT, "ExprType count has changed");
 
 /**
  * Interprets an expression.
@@ -3747,7 +3754,7 @@ ReturnObject *interpretAltArrayDefStmtNode(StmtNode *node,
  * A jump table for statements.  The index of a function in the table is given
  * by its its index in the enumerated StmtType type.
  */
-static ReturnObject *(*StmtJumpTable[14])(StmtNode *, ScopeObject *) = {
+static ReturnObject *(*StmtJumpTable[15])(StmtNode *, ScopeObject *) = {
 	interpretCastStmtNode,
 	interpretPrintStmtNode,
 	interpretInputStmtNode,
@@ -3763,6 +3770,8 @@ static ReturnObject *(*StmtJumpTable[14])(StmtNode *, ScopeObject *) = {
   interpretExtrnFuncDeclStmtNode,
 	interpretExprStmtNode,
 	interpretAltArrayDefStmtNode };
+
+static_assert(ARRAY_LEN(StmtJumpTable) == ST_COUNT, "StmtType count has changed");
 
 /**
  * Interprets a statement.

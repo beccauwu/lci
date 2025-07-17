@@ -231,6 +231,7 @@ typedef enum {
   ST_FUNCDECL,        /**< Function declaration statement. */
 	ST_EXPR,            /**< Expression statement. */
 	ST_ALTARRAYDEF,     /**< Function definition statement. */
+  ST_COUNT
 } StmtType;
 
 /**
@@ -258,7 +259,8 @@ typedef enum {
 	ET_IDENTIFIER, /**< Identifier expression. */
 	ET_FUNCCALL,   /**< Function call expression. */
 	ET_OP,         /**< Operation expression. */
-	ET_IMPVAR      /**< \ref impvar "Implicit variable". */
+	ET_IMPVAR,      /**< \ref impvar "Implicit variable". */
+  ET_COUNT
 } ExprType;
 
 /**
@@ -554,7 +556,8 @@ typedef enum {
 	OP_EQ,   /**< Equality. */
 	OP_NEQ,  /**< Inequality. */
 
-	OP_CAT   /**< String concatenation. */
+	OP_CAT,   /**< String concatenation. */
+  OP_COUNT
 } OpType;
 
 /**
