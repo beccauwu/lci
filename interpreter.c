@@ -10,6 +10,8 @@
 #define ARRAY_LEN(a) (sizeof(a)/sizeof(a[0]))
 #define TODO(s) (fprintf(stderr, "%s:%d - TODO: %s ( %s )\n", __FILE__, __LINE__,__func__,(s)), abort())
 
+static void *ldlibs = NULL;
+
 /**
  * Creates a new string by copying the contents of another string.
  *
@@ -1697,7 +1699,9 @@ static ffi_type *ffi_type_from_id(IdentifierNode *node) {
   char *type = node->id;
   if(strcmp(type, "SIZE") == 0) {
     rtype = &ffi_type_ulong;
-  } else if (strcmp(type, "VOIDP") == 0) {
+  } else if(strcmp(type, "INT") == 0){
+    rtype = &ffi_type_sint32;
+  } else if (strcmp(type, "VOIDP") == 0 || strcmp(type, "STR") == 0) {
     rtype = &ffi_type_pointer;
   } else if (strcmp(type, "VOID") == 0) {
     rtype = &ffi_type_void;
@@ -1706,6 +1710,11 @@ static ffi_type *ffi_type_from_id(IdentifierNode *node) {
   }
   return rtype;
 }
+
+typedef struct {
+  size_t n;
+  ValueObject **vos;
+};
 
 /**
  * Interprets a function call.
@@ -1731,7 +1740,6 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 	ValueObject *ret = NULL;
 	ScopeObject *dest = NULL;
 	ScopeObject *target = NULL;
-
 	dest = getScopeObject(scope, scope, expr->scope);
 
 	target = getScopeObjectLocalCaller(scope, dest, expr->name);
@@ -1768,12 +1776,12 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 	}
   /* External function calls */
   if (def->type == VT_EXTRN) {
-    void *libs = dlopen(NULL, RTLD_LAZY);
-    if(libs == NULL) {
+    if(ldlibs == NULL) ldlibs = dlopen(NULL, RTLD_LAZY);
+    if(ldlibs == NULL) {
       printf("couldn't resolve libraries: %s\n", dlerror());
       abort();
     }
-    void(*func)(void) = dlsym(libs, (char*)getExtrn(def)->name->id);
+    void(*func)(void) = dlsym(ldlibs, (char*)getExtrn(def)->name->id);
     if(func == NULL) {
       printf("couldn't resolve %s: %s\n",(char*)getExtrn(def)->name->id, dlerror());
       abort();
@@ -1782,12 +1790,13 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
     ffi_type **arg_types = malloc(sizeof(*arg_types)*getExtrn(def)->args->num);
     void **arg_values = malloc(sizeof(*arg_values)*getExtrn(def)->args->num);
     unsigned int nargs = getExtrn(def)->args->num;
+    ValueObject **vos = malloc(sizeof(*vos)*nargs);
     for(size_t i = 0; i < nargs; ++i) {
       ValueObject *val = NULL;
       if (!createScopeValue(scope, outer, getExtrn(def)->args->ids[i])) {
         goto extrn_end;
       }
-      if (!(val = interpretExprNode(expr->args->exprs[i], scope))) {
+      if (!(val = vos[i] = interpretExprNode(expr->args->exprs[i], scope))) {
         goto extrn_end;
       }
       //TODO: can we guarantee it's a char*?
@@ -1810,15 +1819,64 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       printf("ffi: couldnt prep cif");
       goto extrn_end;
     }
-    ffi_arg result;
-    ffi_call(&cif, FFI_FN(func), &result, arg_values);
+    //largest value we handle
+    void *result = malloc(sizeof(long double));
+    ffi_call(&cif, FFI_FN(func), result, arg_values);
     switch(rtype->type) {
       case FFI_TYPE_POINTER: {
-        ret = createStringValueObject((char*)result);
-        ret->type = VT_PTR;
+        char *value = *((char**)result);
+        ret = createStringValueObject(value);
+        // if the function returns string we leave it as is
+        if(strcmp(getExtrn(def)->ret_type->id, "VOIDP")) ret->type = VT_PTR;
       }; break;
       case FFI_TYPE_VOID: {
         ret =  createNilValueObject();
+      }; break;
+      case FFI_TYPE_SINT8:
+      {
+        int8_t value = *((int8_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_SINT16:{
+        int16_t value = *((int16_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_SINT32:{
+        int32_t value = *((int32_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_SINT64: {
+        int64_t value = *((int64_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT8:{
+        uint8_t value = *((uint8_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT16:{
+        uint16_t value = *((uint16_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT32:{
+        uint32_t value = *((uint32_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT64: {
+        uint64_t value = *((uint64_t*)result);
+        ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_FLOAT: {
+        //NOTE: doubles are truncated
+        float value = *((float*)result);
+        ret = createFloatValueObject((float)value);
+      }; break;
+      case FFI_TYPE_DOUBLE: {
+        double value = *((double*)result);
+        ret = createFloatValueObject((float)value);
+      }; break;
+      case FFI_TYPE_LONGDOUBLE :{
+        long double value = *((long double*)result);
+        ret = createFloatValueObject((float)value);
       }; break;
       default: {
         printf("TODO: handle return type %s\n", (char*)getExtrn(def)->ret_type->id);
@@ -1826,9 +1884,15 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       }
     }
 extrn_end:
-    dlclose(libs);
+    dlclose(ldlibs); //TODO: should keep it open until exit
     deleteScopeObject(outer);
+    for(size_t i = 0; i < nargs; ++i) {
+      deleteValueObject(vos[i]);
+    }
+    free(vos);
     free(arg_types);
+    free(arg_values);
+    free(result);
     return ret;
      
   }
