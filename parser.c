@@ -1117,6 +1117,7 @@ void deleteExtrnFuncDeclStmtNode(ExtrnFuncDeclStmtNode *node)
 	deleteIdentifierNode(node->name);
 	deleteIdentifierNode(node->ret_type);
 	deleteIdentifierNodeList(node->args);
+  deleteIdentifierNode(node->scope);
 	free(node);
 }
 
