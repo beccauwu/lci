@@ -62,7 +62,8 @@ typedef enum {
 	VT_NIL,     /**< Represents no value. */
 	VT_FUNC,    /**< A function. */
   VT_EXTRN,   /**< Extern function */
-	VT_ARRAY    /**< An array. */
+	VT_ARRAY,   /**< An array. */
+  VT_PTR      /**< A pointer (FFI) */
 } ValueType;
 
 /**
