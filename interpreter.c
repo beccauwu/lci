@@ -1,7 +1,11 @@
 #include "interpreter.h"
+#include "error.h"
 #include "parser.h"
 #include <assert.h>
+#include <stdint.h>
+#include <ffi-x86_64.h>
 #include <ffi.h>
+#include <dlfcn.h>
 
 #define ARRAY_LEN(a) (sizeof(a)/sizeof(a[0]))
 #define TODO(s) (fprintf(stderr, "%s:%d - TODO: %s ( %s )\n", __FILE__, __LINE__,__func__,(s)), abort())
@@ -1410,6 +1414,19 @@ ValueObject *castStringExplicit(ValueObject *node,
 			strchr(data, '.')[precision + 1] = '\0';
 			return createStringValueObject(data);
 		}
+    case VT_PTR: {
+			char *data = NULL;
+			unsigned int precision = 2;
+			/*
+			 * One character per float bit plus one more for the
+			 * null character
+			 */
+			size_t size = sizeof(float) * 8 + 1;
+			data = malloc(sizeof(char) * size);
+			if (!data) return NULL;
+			sprintf(data, "%p", (void*)node->data.s);
+			return createStringValueObject(data);
+		}
 		case VT_STRING: {
 			char *temp = NULL;
 			char *data = NULL;
@@ -1675,6 +1692,21 @@ ValueObject *interpretCastExprNode(ExprNode *node,
 	}
 }
 
+static ffi_type *ffi_type_from_id(IdentifierNode *node) {
+  ffi_type *rtype = NULL;
+  char *type = node->id;
+  if(strcmp(type, "SIZE") == 0) {
+    rtype = &ffi_type_ulong;
+  } else if (strcmp(type, "VOIDP") == 0) {
+    rtype = &ffi_type_pointer;
+  } else if (strcmp(type, "VOID") == 0) {
+    rtype = &ffi_type_void;
+  } else {
+    printf("%s:%lu : unknown type %s\n", node->fname, node->line,type);
+  }
+  return rtype;
+}
+
 /**
  * Interprets a function call.
  *
@@ -1721,7 +1753,10 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 		return NULL;
 	}
 	/* Check for correct supplied arity */
-	if (getFunction(def)->args->num != expr->args->num) {
+	if (
+    (def->type == VT_FUNC && getFunction(def)->args->num != expr->args->num)
+    || (def->type == VT_EXTRN && getExtrn(def)->args->num != expr->args->num)
+    ) {
 		IdentifierNode *id = (IdentifierNode *)(expr->name);
 		char *name = resolveIdentifierName(id, scope);
 		if (name) {
@@ -1733,13 +1768,69 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 	}
   /* External function calls */
   if (def->type == VT_EXTRN) {
-    TODO("Handle external function calls");
+    void *libs = dlopen(NULL, RTLD_LAZY);
+    if(libs == NULL) {
+      printf("couldn't resolve libraries: %s\n", dlerror());
+      abort();
+    }
+    void(*func)(void) = dlsym(libs, (char*)getExtrn(def)->name->id);
+    if(func == NULL) {
+      printf("couldn't resolve %s: %s\n",(char*)getExtrn(def)->name->id, dlerror());
+      abort();
+    }
     ffi_cif cif;
     ffi_type **arg_types = malloc(sizeof(*arg_types)*getExtrn(def)->args->num);
-    static_assert(sizeof(size_t) == sizeof(long unsigned int), "?");
-    assert(arg_types != NULL && "malloc failed");
-    //TODO: parse arg types, pass args to ffi, call fn, parse return value
+    void **arg_values = malloc(sizeof(*arg_values)*getExtrn(def)->args->num);
+    unsigned int nargs = getExtrn(def)->args->num;
+    for(size_t i = 0; i < nargs; ++i) {
+      ValueObject *val = NULL;
+      if (!createScopeValue(scope, outer, getExtrn(def)->args->ids[i])) {
+        goto extrn_end;
+      }
+      if (!(val = interpretExprNode(expr->args->exprs[i], scope))) {
+        goto extrn_end;
+      }
+      //TODO: can we guarantee it's a char*?
+      //todo: type check argument
+      IdentifierNode *id = getExtrn(def)->args->ids[i];
+      ffi_type *t = ffi_type_from_id(id);
+      if(t == NULL) {
+        goto extrn_end;
+      }
+      if(t->type == FFI_TYPE_VOID) {
+        printf("%s:%lu - ffi: cannot pass a void argument to a function\n", id->fname, id->line);
+        goto extrn_end;
+      }
+      arg_types[i] = t;
+      arg_values[i] = (void*)&val->data.s; //todo: is this ok??
+    }
+    ffi_type *rtype = ffi_type_from_id(getExtrn(def)->ret_type);
+    ffi_status status;
+    if((status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, nargs, rtype, arg_types)) != FFI_OK) {
+      printf("ffi: couldnt prep cif");
+      goto extrn_end;
+    }
+    ffi_arg result;
+    ffi_call(&cif, FFI_FN(func), &result, arg_values);
+    switch(rtype->type) {
+      case FFI_TYPE_POINTER: {
+        ret = createStringValueObject((char*)result);
+        ret->type = VT_PTR;
+      }; break;
+      case FFI_TYPE_VOID: {
+        ret =  createNilValueObject();
+      }; break;
+      default: {
+        printf("TODO: handle return type %s\n", (char*)getExtrn(def)->ret_type->id);
+        goto extrn_end;
+      }
+    }
+extrn_end:
+    dlclose(libs);
+    deleteScopeObject(outer);
     free(arg_types);
+    return ret;
+     
   }
 	for (n = 0; n < getFunction(def)->args->num; n++) {
 		ValueObject *val = NULL;
