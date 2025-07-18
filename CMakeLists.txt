@@ -41,7 +41,7 @@ SET(SRCS
 )
 add_compile_options(-Wall -Wextra -Wswitch-enum -ggdb)
 add_executable(lci ${SRCS} ${HDRS})
-target_link_libraries(lci m)
+target_link_libraries(lci m ffi dl)
 add_subdirectory(test)
 install(
   TARGETS lci
