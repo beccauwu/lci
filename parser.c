@@ -3849,24 +3849,6 @@ parseFuncDefStmtNodeAbort: /* Exception handling */
 	return NULL;
 }
 
-/**
- * Creates a list of FFITypes.
- *
- * \return A pointer to an ffi type list.
- *
- * \retval NULL Memory allocation failed.
- */
-FFITypeList *createFFITypeList(void)
-{
-	FFITypeList *p = malloc(sizeof(FFITypeList));
-	if (!p) {
-		perror("malloc");
-		return NULL;
-	}
-	p->num   = 0;
-	p->types = NULL;
-	return p;
-}
 
 /**
  * Parses tokens into a function declaration statement.

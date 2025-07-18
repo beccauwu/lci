@@ -352,19 +352,6 @@ typedef struct {
 	ConstantData data; /**< The constant. */
 } ConstantNode;
 
-/**
- * Represents a c type.
- */
-typedef enum {
-	FT_VOID,    /**< void */
-	FT_VOIDP,   /**< *void */
-  FT_SIZE,    /**< size_t */
-} FFIType;
-
-typedef struct {
-  unsigned int num;       /**< The number of args. */
-  FFIType *types;         /**< Array of ffitypes. */
-} FFITypeList;
 
 /**
  * Stores a function definition statement.
