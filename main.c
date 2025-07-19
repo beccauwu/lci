@@ -252,6 +252,6 @@ int main(int argc, char **argv)
 		/* End main pipeline */
 
 	}
-
+  free_ffi_ctx();
 	return 0;
 }

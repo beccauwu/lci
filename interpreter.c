@@ -7,10 +7,12 @@
 #include <ffi.h>
 #include <dlfcn.h>
 
+#define STB_DS_IMPLEMENTATION
+#include "stb_ds.h"
+
 #define ARRAY_LEN(a) (sizeof(a)/sizeof(a[0]))
 #define TODO(s) (fprintf(stderr, "%s:%d - TODO: %s ( %s )\n", __FILE__, __LINE__,__func__,(s)), abort())
 
-static void *ldlibs = NULL;
 
 /**
  * Creates a new string by copying the contents of another string.
@@ -1712,9 +1714,42 @@ static ffi_type *ffi_type_from_id(IdentifierNode *node) {
 }
 
 typedef struct {
-  size_t n;
-  ValueObject **vos;
-};
+  ffi_cif *cif; /**< libffi cif (malloc'd) */
+  void(*ptr)(void); /**< pointer retreived by dlsym */
+} FFI_Func;
+
+/**
+ * Hashmap type
+ */
+typedef struct {
+  char *key; /**< Function name */
+  FFI_Func value;
+} FFI_Func_T;
+
+typedef struct {
+  void *libs; /**< HANDLE retreived from dlopen */
+  FFI_Func_T *funcs; /**< Hashmap char* -> FFI_Func */
+  ffi_type ***ats; /**< dynamic array of ffi argtypes */
+} FFI_Ctx;
+
+static FFI_Ctx ffi_ctx = {0};
+
+void free_ffi_ctx() {
+  if(ffi_ctx.ats != NULL) {
+    for(size_t i = 0; i < arrlenu(ffi_ctx.ats); ++i) {
+      free(ffi_ctx.ats[i]);
+    }
+    arrfree(ffi_ctx.ats);
+  }
+  if(ffi_ctx.funcs != NULL){
+    for(size_t i = 0; i < shlenu(ffi_ctx.funcs); ++i) {
+      free(ffi_ctx.funcs[i].value.cif);
+    }
+    shfree(ffi_ctx.funcs);
+  }
+  
+  if(ffi_ctx.libs) dlclose(ffi_ctx.libs);
+}
 
 /**
  * Interprets a function call.
@@ -1776,20 +1811,49 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 	}
   /* External function calls */
   if (def->type == VT_EXTRN) {
-    if(ldlibs == NULL) ldlibs = dlopen(NULL, RTLD_LAZY);
-    if(ldlibs == NULL) {
+    if(ffi_ctx.libs == NULL) ffi_ctx.libs = dlopen(NULL, RTLD_LAZY);
+    if(ffi_ctx.libs == NULL) {
       printf("couldn't resolve libraries: %s\n", dlerror());
       abort();
     }
-    void(*func)(void) = dlsym(ldlibs, (char*)getExtrn(def)->name->id);
-    if(func == NULL) {
-      printf("couldn't resolve %s: %s\n",(char*)getExtrn(def)->name->id, dlerror());
-      abort();
-    }
-    ffi_cif cif;
-    ffi_type **arg_types = malloc(sizeof(*arg_types)*getExtrn(def)->args->num);
-    void **arg_values = malloc(sizeof(*arg_values)*getExtrn(def)->args->num);
+    ffi_cif *cif = NULL;
+    void(*func)(void) = NULL;
+    char *fname = (char*)getExtrn(def)->name->id;
+    ptrdiff_t fidx = shgeti(ffi_ctx.funcs, fname);
     unsigned int nargs = getExtrn(def)->args->num;
+    ffi_type *rtype = ffi_type_from_id(getExtrn(def)->ret_type);
+    if(fidx >= 0) {
+      cif = ffi_ctx.funcs[fidx].value.cif;
+      func = ffi_ctx.funcs[fidx].value.ptr;
+    } else {
+      ffi_type **arg_types = malloc(sizeof(*arg_types)*getExtrn(def)->args->num);
+      cif = malloc(sizeof(ffi_cif));
+      for(size_t i = 0; i < nargs; ++i) {
+        IdentifierNode *id = getExtrn(def)->args->ids[i];
+        ffi_type *t = ffi_type_from_id(id);
+        if(t == NULL) {
+          goto extrn_end;
+        }
+        if(t->type == FFI_TYPE_VOID) {
+          printf("%s:%lu - ffi: cannot pass a void argument to a function\n", id->fname, id->line);
+          goto extrn_end;
+        }
+        arg_types[i] = t;
+      }
+      ffi_status status;
+      if((status = ffi_prep_cif(cif, FFI_DEFAULT_ABI, nargs, rtype, arg_types)) != FFI_OK) {
+        printf("ffi: couldnt prep cif");
+        goto extrn_end;
+      }
+      if((func = dlsym(ffi_ctx.libs, fname)) == NULL) {
+        goto extrn_end;
+      }
+      shput(ffi_ctx.funcs, fname, ((FFI_Func){cif,func}));
+      arrput(ffi_ctx.ats, arg_types);
+    }
+    
+    void **arg_values = malloc(sizeof(*arg_values)*getExtrn(def)->args->num);
+    
     ValueObject **vos = malloc(sizeof(*vos)*nargs);
     for(size_t i = 0; i < nargs; ++i) {
       ValueObject *val = NULL;
@@ -1799,29 +1863,13 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       if (!(val = vos[i] = interpretExprNode(expr->args->exprs[i], scope))) {
         goto extrn_end;
       }
-      //TODO: can we guarantee it's a char*?
       //todo: type check argument
-      IdentifierNode *id = getExtrn(def)->args->ids[i];
-      ffi_type *t = ffi_type_from_id(id);
-      if(t == NULL) {
-        goto extrn_end;
-      }
-      if(t->type == FFI_TYPE_VOID) {
-        printf("%s:%lu - ffi: cannot pass a void argument to a function\n", id->fname, id->line);
-        goto extrn_end;
-      }
-      arg_types[i] = t;
       arg_values[i] = (void*)&val->data.s; //todo: is this ok??
     }
-    ffi_type *rtype = ffi_type_from_id(getExtrn(def)->ret_type);
-    ffi_status status;
-    if((status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, nargs, rtype, arg_types)) != FFI_OK) {
-      printf("ffi: couldnt prep cif");
-      goto extrn_end;
-    }
+    
     //largest value we handle
     void *result = malloc(sizeof(long double));
-    ffi_call(&cif, FFI_FN(func), result, arg_values);
+    ffi_call(cif, FFI_FN(func), result, arg_values);
     switch(rtype->type) {
       case FFI_TYPE_POINTER: {
         char *value = *((char**)result);
@@ -1884,13 +1932,11 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       }
     }
 extrn_end:
-    dlclose(ldlibs); //TODO: should keep it open until exit
     deleteScopeObject(outer);
     for(size_t i = 0; i < nargs; ++i) {
       deleteValueObject(vos[i]);
     }
     free(vos);
-    free(arg_types);
     free(arg_values);
     free(result);
     return ret;

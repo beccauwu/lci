@@ -137,6 +137,7 @@ char *copyString(char *);
 unsigned int isHexString(const char *);
 char *resolveIdentifierName(IdentifierNode *, ScopeObject *);
 int resolveTerminalSlot(ScopeObject *, ScopeObject *, IdentifierNode *, ScopeObject **, IdentifierNode **);
+void free_ffi_ctx();
 /**@}*/
 
 /**
