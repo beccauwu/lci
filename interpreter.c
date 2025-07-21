@@ -1735,7 +1735,7 @@ typedef struct {
 } FFI_Func_T;
 
 typedef struct {
-  void *libs; /**< HANDLE retreived from dlopen */
+  void **libs; /**< HANDLE retreived from dlopen */
   FFI_Func_T *funcs; /**< Hashmap char* -> FFI_Func */
   ffi_type ***ats; /**< dynamic array of ffi argtypes (need to keep the pointers alive) */
 } FFI_Ctx;
@@ -1756,8 +1756,14 @@ void free_ffi_ctx() {
     shfree(ffi_ctx.funcs);
   }
   
-  if(ffi_ctx.libs) dlclose(ffi_ctx.libs);
+  if(ffi_ctx.libs != NULL) {
+    for(size_t i = 0; i < arrlenu(ffi_ctx.libs); ++i) {
+      dlclose(ffi_ctx.libs[i]);
+    }
+    arrfree(ffi_ctx.libs);
+  }
 }
+
 
 
 /**
@@ -1838,6 +1844,25 @@ bool FFIReturnToVO(ValueObject **ret, ValueObject *def, ffi_type *rtype, void* r
   return true;
 }
 
+void* find_symbol(char *name) {
+  if(ffi_ctx.libs == NULL) return NULL;
+  void (*ret)(void) = NULL;
+  for(size_t i = 0; i < arrlenu(ffi_ctx.libs); ++i) {
+    if((ret = dlsym(ffi_ctx.libs[i], name)) != NULL) break;
+  }
+  return ret;
+}
+
+bool add_lib(char* name) {
+  void *lib = dlopen(name, RTLD_LAZY);
+  if(lib == NULL) {
+    fprintf(stderr, "%s\n", dlerror());
+    return false;
+  }
+  printf("Loaded library: %s\n", name == NULL ? "stdlib" : name);
+  arrput(ffi_ctx.libs, lib);
+  return true;
+}
 
 /**
  * Interprets a function call.
@@ -1899,10 +1924,9 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
 	}
   /* External function calls */
   if (def->type == VT_EXTRN) {
-    if(ffi_ctx.libs == NULL) ffi_ctx.libs = dlopen(NULL, RTLD_LAZY);
     if(ffi_ctx.libs == NULL) {
-      printf("couldn't resolve libraries: %s\n", dlerror());
-      abort();
+      // this should be unreachable since we always load at least stdlib
+      assert(0 && "unreachable");
     }
     ffi_cif *cif = NULL;
     void(*func)(void) = NULL;
@@ -1933,7 +1957,7 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
         printf("ffi: couldnt prep cif");
         goto extrn_end;
       }
-      if((func = dlsym(ffi_ctx.libs, fname)) == NULL) {
+      if((func = find_symbol(fname)) == NULL) {
         goto extrn_end;
       }
       shput(ffi_ctx.funcs, fname, ((FFI_Func){cif,func}));

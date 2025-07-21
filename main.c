@@ -120,10 +120,11 @@
 
 static char *program_name;
 
-static char *shortopt = "hv";
+static char *shortopt = "hvl:";
 static struct option longopt[] = {
 	{ "help", no_argument, NULL, (int)'h' },
 	{ "version", no_argument, NULL, (int)'v' },
+  //{ "lib", optional_argument, NULL, (int)'l' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -132,7 +133,8 @@ static void help(void) {
 Usage: %s [FILE] ... \n\
 Interpret FILE(s) as LOLCODE. Let FILE be '-' for stdin.\n\
   -h, --help\t\toutput this help\n\
-  -v, --version\t\tprogram version\n", program_name);
+  -v, --version\t\tprogram version\n\
+  -l <lib.so>\t\ta dynamic library to load\n", program_name);
 }
 
 static void version (char *revision) {
@@ -162,12 +164,16 @@ int main(int argc, char **argv)
 			case 'h':
 				help();
 				exit(EXIT_SUCCESS);
+      case 'l':
+        if(optarg != NULL && !add_lib(strdup(optarg))) return 1; 
+        break;
 			case 'v':
 				version(revision);
 				exit(EXIT_SUCCESS);
 		}
 	}
-
+  // load stdlib
+  if(!add_lib(NULL)) return 1;
 	for (; optind < argc; optind++) {
 		size = length = 0;
 		buffer = fname = NULL;
