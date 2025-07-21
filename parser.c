@@ -521,6 +521,7 @@ void deleteStmtNode(StmtNode *node)
 			deleteAltArrayDefStmtNode(stmt);
 			break;
 		}
+    case ST_COUNT:
 		default:
 			error(PR_UNKNOWN_STATEMENT_TYPE);
 			break;
@@ -1217,6 +1218,7 @@ void deleteExprNode(ExprNode *node)
 			break;
 		case ET_IMPVAR:
 			break; /* This expression type does not have any content */
+    case ET_COUNT:
 		default:
 			error(PR_UNKNOWN_EXPRESSION_TYPE);
 			break;

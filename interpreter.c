@@ -12,7 +12,7 @@
 
 #define ARRAY_LEN(a) (sizeof(a)/sizeof(a[0]))
 #define TODO(s) (fprintf(stderr, "%s:%d - TODO: %s ( %s )\n", __FILE__, __LINE__,__func__,(s)), abort())
-
+#define UNUSED(v) (void)v
 
 /**
  * Creates a new string by copying the contents of another string.
@@ -849,7 +849,6 @@ ScopeObject *getScopeObject(ScopeObject *src,
 {
 	ValueObject *val = NULL;
 	char *name = NULL;
-	int status;
 	int isI;
 	int isME;
 	ScopeObject *scope;
@@ -1237,7 +1236,10 @@ ValueObject *castBooleanExplicit(ValueObject *node,
 			}
 			else
 				return createBooleanValueObject(getString(node)[0] != '\0');
-		case VT_FUNC:
+    case VT_PTR:
+      return createBooleanValueObject(node->data.s != NULL);
+		case VT_EXTRN:
+    case VT_FUNC:
 			error(IN_CANNOT_CAST_FUNCTION_TO_BOOLEAN);
 			return NULL;
 		case VT_ARRAY:
@@ -1290,6 +1292,9 @@ ValueObject *castIntegerExplicit(ValueObject *node,
 				long long value = strtoll(getString(node), NULL, 0);
 				return createIntegerValueObject(value);
 			}
+    case VT_PTR:
+      return createIntegerValueObject((long long)node->data.s);
+    case VT_EXTRN:
 		case VT_FUNC:
 			error(IN_CANNOT_CAST_FUNCTION_TO_INTEGER);
 			return NULL;
@@ -1343,9 +1348,11 @@ ValueObject *castFloatExplicit(ValueObject *node,
 				float value = strtof(getString(node), NULL);
 				return createFloatValueObject(value);
 			}
+    case VT_EXTRN:
 		case VT_FUNC:
 			error(IN_CANNOT_CAST_FUNCTION_TO_DECIMAL);
 			return NULL;
+    case VT_PTR:
 		case VT_ARRAY:
 			error(IN_CANNOT_CAST_ARRAY_TO_DECIMAL);
 			return NULL;
@@ -1420,12 +1427,8 @@ ValueObject *castStringExplicit(ValueObject *node,
 		}
     case VT_PTR: {
 			char *data = NULL;
-			unsigned int precision = 2;
-			/*
-			 * One character per float bit plus one more for the
-			 * null character
-			 */
-			size_t size = sizeof(float) * 8 + 1;
+      // 2 characters per byte + 2 for 0x, and 1 for null
+			size_t size = sizeof(void*) * 2 + 2 + 1;
 			data = malloc(sizeof(char) * size);
 			if (!data) return NULL;
 			sprintf(data, "%p", (void*)node->data.s);
@@ -1616,6 +1619,7 @@ ValueObject *castStringExplicit(ValueObject *node,
 			free(temp);
 			return createStringValueObject(data);
 		}
+    case VT_EXTRN:
 		case VT_FUNC: {
 			error(IN_CANNOT_CAST_FUNCTION_TO_STRING);
 			return NULL;
@@ -1645,7 +1649,7 @@ ValueObject *castStringExplicit(ValueObject *node,
 ValueObject *interpretImpVarExprNode(ExprNode *node,
                                      ScopeObject *scope)
 {
-	node = NULL;
+  UNUSED(node);
 	return scope->impvar;
 }
 
@@ -1689,6 +1693,10 @@ ValueObject *interpretCastExprNode(ExprNode *node,
 			ret = castStringExplicit(val, scope);
 			deleteValueObject(val);
 			return ret;
+    case CT_ARRAY:
+      error(IN_CANNOT_CAST_VALUE_TO_ARRAY);
+      deleteValueObject(val);
+			return NULL;
 		default:
 			error(IN_UNKNOWN_CAST_TYPE);
 			deleteValueObject(val);
@@ -1708,7 +1716,7 @@ static ffi_type *ffi_type_from_id(IdentifierNode *node) {
   } else if (strcmp(type, "VOID") == 0) {
     rtype = &ffi_type_void;
   } else {
-    printf("%s:%lu : unknown type %s\n", node->fname, node->line,type);
+    printf("%s:%u : unknown type %s\n", node->fname, node->line,type);
   }
   return rtype;
 }
@@ -1729,7 +1737,7 @@ typedef struct {
 typedef struct {
   void *libs; /**< HANDLE retreived from dlopen */
   FFI_Func_T *funcs; /**< Hashmap char* -> FFI_Func */
-  ffi_type ***ats; /**< dynamic array of ffi argtypes */
+  ffi_type ***ats; /**< dynamic array of ffi argtypes (need to keep the pointers alive) */
 } FFI_Ctx;
 
 static FFI_Ctx ffi_ctx = {0};
@@ -1750,6 +1758,86 @@ void free_ffi_ctx() {
   
   if(ffi_ctx.libs) dlclose(ffi_ctx.libs);
 }
+
+
+/**
+ * Converts libffi return value to a ValueObject
+ *
+ * \param [out] ret A pointer to the valueobject variable
+ * 
+ * \param [in] def function definition
+ *
+ * \param [in] rtype the ffi return type
+ *
+ * \param [in] rvalue value returned by libffi
+ *
+ * \return Boolean signifying success
+ */
+bool FFIReturnToVO(ValueObject **ret, ValueObject *def, ffi_type *rtype, void* rvalue) {
+  switch(rtype->type) {
+      case FFI_TYPE_POINTER: {
+        char *value = *((char**)rvalue);
+        *ret = createStringValueObject(value);
+        // if the function *returns string we leave it as is
+        if(strcmp(getExtrn(def)->ret_type->id, "VOIDP")) (*ret)->type = VT_PTR;
+      }; break;
+      case FFI_TYPE_VOID: {
+        *ret =  createNilValueObject();
+      }; break;
+      case FFI_TYPE_SINT8:
+      {
+        int8_t value = *((int8_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_SINT16:{
+        int16_t value = *((int16_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_SINT32:{
+        int32_t value = *((int32_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_SINT64: {
+        int64_t value = *((int64_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT8:{
+        uint8_t value = *((uint8_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT16:{
+        uint16_t value = *((uint16_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT32:{
+        uint32_t value = *((uint32_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_UINT64: {
+        uint64_t value = *((uint64_t*)rvalue);
+        *ret = createIntegerValueObject((long long)value);
+      }; break;
+      case FFI_TYPE_FLOAT: {
+        //NOTE: doubles are truncated
+        float value = *((float*)rvalue);
+        *ret = createFloatValueObject((float)value);
+      }; break;
+      case FFI_TYPE_DOUBLE: {
+        double value = *((double*)rvalue);
+        *ret = createFloatValueObject((float)value);
+      }; break;
+      case FFI_TYPE_LONGDOUBLE :{
+        long double value = *((long double*)rvalue);
+        *ret = createFloatValueObject((float)value);
+      }; break;
+      default: {
+        printf("TODO: handle *return type %s\n", (char*)getExtrn(def)->ret_type->id);
+        return false;
+      }
+    }
+  return true;
+}
+
 
 /**
  * Interprets a function call.
@@ -1826,7 +1914,7 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       cif = ffi_ctx.funcs[fidx].value.cif;
       func = ffi_ctx.funcs[fidx].value.ptr;
     } else {
-      ffi_type **arg_types = malloc(sizeof(*arg_types)*getExtrn(def)->args->num);
+      ffi_type **arg_types = malloc(sizeof(*arg_types)*nargs);
       cif = malloc(sizeof(ffi_cif));
       for(size_t i = 0; i < nargs; ++i) {
         IdentifierNode *id = getExtrn(def)->args->ids[i];
@@ -1835,7 +1923,7 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
           goto extrn_end;
         }
         if(t->type == FFI_TYPE_VOID) {
-          printf("%s:%lu - ffi: cannot pass a void argument to a function\n", id->fname, id->line);
+          printf("%s:%u - ffi: cannot pass a void argument to a function\n", id->fname, id->line);
           goto extrn_end;
         }
         arg_types[i] = t;
@@ -1851,9 +1939,12 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       shput(ffi_ctx.funcs, fname, ((FFI_Func){cif,func}));
       arrput(ffi_ctx.ats, arg_types);
     }
-    
+    assert(cif != NULL);
+    assert(func != NULL);
     void **arg_values = malloc(sizeof(*arg_values)*getExtrn(def)->args->num);
     
+    // temp array to store pointers to the arguments, deallocated at end
+    // parsing of the size is done by libffi, unneccessary to do it here ourselves
     ValueObject **vos = malloc(sizeof(*vos)*nargs);
     for(size_t i = 0; i < nargs; ++i) {
       ValueObject *val = NULL;
@@ -1863,74 +1954,14 @@ ValueObject *interpretFuncCallExprNode(ExprNode *node,
       if (!(val = vos[i] = interpretExprNode(expr->args->exprs[i], scope))) {
         goto extrn_end;
       }
-      //todo: type check argument
+      //todo: type check argument?
       arg_values[i] = (void*)&val->data.s; //todo: is this ok??
     }
     
     //largest value we handle
     void *result = malloc(sizeof(long double));
     ffi_call(cif, FFI_FN(func), result, arg_values);
-    switch(rtype->type) {
-      case FFI_TYPE_POINTER: {
-        char *value = *((char**)result);
-        ret = createStringValueObject(value);
-        // if the function returns string we leave it as is
-        if(strcmp(getExtrn(def)->ret_type->id, "VOIDP")) ret->type = VT_PTR;
-      }; break;
-      case FFI_TYPE_VOID: {
-        ret =  createNilValueObject();
-      }; break;
-      case FFI_TYPE_SINT8:
-      {
-        int8_t value = *((int8_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_SINT16:{
-        int16_t value = *((int16_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_SINT32:{
-        int32_t value = *((int32_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_SINT64: {
-        int64_t value = *((int64_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_UINT8:{
-        uint8_t value = *((uint8_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_UINT16:{
-        uint16_t value = *((uint16_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_UINT32:{
-        uint32_t value = *((uint32_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_UINT64: {
-        uint64_t value = *((uint64_t*)result);
-        ret = createIntegerValueObject((long long)value);
-      }; break;
-      case FFI_TYPE_FLOAT: {
-        //NOTE: doubles are truncated
-        float value = *((float*)result);
-        ret = createFloatValueObject((float)value);
-      }; break;
-      case FFI_TYPE_DOUBLE: {
-        double value = *((double*)result);
-        ret = createFloatValueObject((float)value);
-      }; break;
-      case FFI_TYPE_LONGDOUBLE :{
-        long double value = *((long double*)result);
-        ret = createFloatValueObject((float)value);
-      }; break;
-      default: {
-        printf("TODO: handle return type %s\n", (char*)getExtrn(def)->ret_type->id);
-        goto extrn_end;
-      }
-    }
+    if(!FFIReturnToVO(&ret, def, rtype, result)) goto extrn_end;
 extrn_end:
     deleteScopeObject(outer);
     for(size_t i = 0; i < nargs; ++i) {
@@ -2011,6 +2042,7 @@ ValueObject *interpretIdentifierExprNode(ExprNode *node,
 	return copyValueObject(val);
 }
 
+
 /**
  * Interprets a constant.
  *
@@ -2032,8 +2064,8 @@ ValueObject *interpretIdentifierExprNode(ExprNode *node,
 ValueObject *interpretConstantExprNode(ExprNode *node,
                                        ScopeObject *scope)
 {
-	ConstantNode *expr = (ConstantNode *)node->expr;
-	scope = NULL;
+  ConstantNode *expr = (ConstantNode *)node->expr;
+  UNUSED(scope);
 	switch (expr->type) {
 		case CT_NIL:
 			return createNilValueObject();
@@ -2053,6 +2085,7 @@ ValueObject *interpretConstantExprNode(ExprNode *node,
 			if (!str) return NULL;
 			return createStringValueObject(str);
 		}
+    case CT_ARRAY:
 		default:
 			error(IN_UNKNOWN_CONSTANT_TYPE);
 			return NULL;
@@ -2635,8 +2668,16 @@ ValueObject *interpretArithOpExprNode(OpExprNode *expr,
 			cast1 = 1;
 			break;
 		}
-		default:
+    case VT_ARRAY:
+    case VT_EXTRN:
+    case VT_FUNC:
+    case VT_PTR:
 			error(IN_INVALID_OPERAND_TYPE);
+      deleteValueObject(val1);
+			deleteValueObject(val2);
+      return NULL;
+    default:
+      assert(0 && "unreachable");
 	}
 	switch (val2->type) {
 		case VT_NIL:
@@ -2676,8 +2717,16 @@ ValueObject *interpretArithOpExprNode(OpExprNode *expr,
 			cast2 = 1;
 			break;
 		}
-		default:
+    case VT_ARRAY:
+    case VT_EXTRN:
+    case VT_FUNC:
+    case VT_PTR:
 			error(IN_INVALID_OPERAND_TYPE);
+      deleteValueObject(val1);
+			deleteValueObject(val2);
+      return NULL;
+    default:
+      assert(0 && "unreachable");
 	}
 	/* Do math depending on value types */
 	ret = ArithOpJumpTable[expr->type][use1->type][use2->type](use1, use2);
@@ -2738,9 +2787,22 @@ ValueObject *interpretBoolOpExprNode(OpExprNode *expr,
 				case OP_XOR:
 					acc ^= temp;
 					break;
+        case OP_SUB:
+        case OP_MULT:
+        case OP_DIV:
+        case OP_MOD:
+        case OP_MAX:
+        case OP_MIN:
+        case OP_NOT:
+        case OP_EQ:
+        case OP_NEQ:
+        case OP_CAT:
+        case OP_ADD:
+          error(IN_INVALID_BOOLEAN_OPERATION_TYPE);
+          return NULL;
+        case OP_COUNT:
 				default:
-					error(IN_INVALID_BOOLEAN_OPERATION_TYPE);
-					return NULL;
+          assert(0 && "unreachable");
 			}
 		}
 		/**
@@ -2945,11 +3007,10 @@ ValueObject *opNeqStringString(ValueObject *a,
 ValueObject *opEqNilNil(ValueObject *a,
                         ValueObject *b)
 {
-	a = NULL;
-	b = NULL;
+	UNUSED(a);
+  UNUSED(b);
 	return createBooleanValueObject(1);
 }
-
 /**
  * Returns false because two nil values are never not equal.
  *
@@ -2962,8 +3023,8 @@ ValueObject *opEqNilNil(ValueObject *a,
 ValueObject *opNeqNilNil(ValueObject *a,
                          ValueObject *b)
 {
-	a = NULL;
-	b = NULL;
+	UNUSED(a);
+  UNUSED(b);
 	return createBooleanValueObject(0);
 }
 
@@ -3028,11 +3089,25 @@ ValueObject *interpretEqualityOpExprNode(OpExprNode *expr,
 			case OP_NEQ:
 				ret = createBooleanValueObject(1);
 				break;
+      case OP_ADD:
+      case OP_SUB:
+      case OP_MULT:
+      case OP_DIV:
+      case OP_MOD:
+      case OP_MAX:
+      case OP_MIN:
+      case OP_AND:
+      case OP_OR:
+      case OP_XOR:
+      case OP_NOT:
+      case OP_CAT:
+        error(IN_INVALID_EQUALITY_OPERATION_TYPE);
+        deleteValueObject(val1);
+        deleteValueObject(val2);
+        return NULL;
+      case OP_COUNT:
 			default:
-				error(IN_INVALID_EQUALITY_OPERATION_TYPE);
-				deleteValueObject(val1);
-				deleteValueObject(val2);
-				return NULL;
+        assert(0 && "unreachable");
 		}
 	}
 	else
@@ -3569,10 +3644,15 @@ ReturnObject *interpretSwitchStmtNode(StmtNode *node,
 					if (!strcmp(getString(use1), getString(use2)))
 						done = 1;
 					break;
-				default:
+        case VT_ARRAY:
+        case VT_EXTRN:
+        case VT_FUNC:
+        case VT_PTR:
 					error(IN_INVALID_TYPE);
 					deleteValueObject(use2);
 					return NULL;
+        default:
+          assert(0 && "unreachable");
 			}
 		}
 		deleteValueObject(use2);
@@ -3631,8 +3711,8 @@ ReturnObject *interpretSwitchStmtNode(StmtNode *node,
 ReturnObject *interpretBreakStmtNode(StmtNode *node,
                                      ScopeObject *scope)
 {
-	node = NULL;
-	scope = NULL;
+	UNUSED(node);
+  UNUSED(scope);
 	return createReturnObject(RT_BREAK, NULL);
 }
 
